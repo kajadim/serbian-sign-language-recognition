@@ -1,0 +1,7 @@
+venv
+data/
+models/*.npy
+models/*.keras
+models/*.pkl
+models/*.h5
+*.png
