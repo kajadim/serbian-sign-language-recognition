@@ -28,21 +28,31 @@ if __name__ == "__main__":
     for i, label in enumerate(le.classes_):
         print(f"{label:4s} -> {i}")
 
-    X_train, X_test, y_train, y_test = train_test_split(
+    X_temp, X_test, y_temp, y_test = train_test_split(
         X_norm, y_encoded,
-        test_size=0.2,
+        test_size=0.15,
         random_state=42,
         stratify=y_encoded
     )
 
+    X_train, X_val, y_train, y_val = train_test_split(
+    X_temp, y_temp,
+    test_size=0.176,
+    random_state=42,
+    stratify=y_temp
+    )
+
     print(f"\nPodela dataseta:")
     print(f"  Trening: {X_train.shape[0]} snimaka")
+    print(f"  Trening: {X_val.shape[0]} snimaka")
     print(f"  Test   : {X_test.shape[0]} snimaka")
 
     os.makedirs("models", exist_ok=True)
     np.save("models/X_train.npy", X_train)
+    np.save("models/X_val.npy", X_val)
     np.save("models/X_test.npy",  X_test)
     np.save("models/y_train.npy", y_train)
+    np.save("models/y_val.npy", y_val)
     np.save("models/y_test.npy",  y_test)
     np.save("models/classes.npy", le.classes_)
     joblib.dump(scaler, "models/scaler.pkl")

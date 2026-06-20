@@ -7,11 +7,15 @@ from keras.models import Sequential
 from keras.layers import LSTM, Dense, Dropout
 from keras.callbacks import ModelCheckpoint, EarlyStopping
 from keras.utils import to_categorical
+from keras.models import load_model
+from keras.optimizers import Adam
 import matplotlib.pyplot as plt
 
 
 X_train = np.load("models/X_train.npy")
 y_train = np.load("models/y_train.npy")
+X_val = np.load("models/X_val.npy")
+y_val = np.load("models/y_val.npy")
 X_test = np.load("models/X_test.npy")
 y_test = np.load("models/y_test.npy")
 classes = np.load("models/classes.npy", allow_pickle=True)
@@ -24,21 +28,15 @@ print(f"Broj klasa: {NUM_CLASSES}")
 
 
 y_train_cat = to_categorical(y_train, NUM_CLASSES)
+y_val_cat = to_categorical(y_val, NUM_CLASSES)
 y_test_cat = to_categorical(y_test, NUM_CLASSES)
 
-model = Sequential([
-    LSTM(128, return_sequences=True, input_shape = (40, 258)),
-    Dropout(0.3),
-    LSTM(64, return_sequences=False),
-    Dropout(0.3),
-    Dense(64, activation='relu'),
-    Dense(NUM_CLASSES, activation='softmax')
-])
+model = load_model("models/best_params.keras")
 
 model.summary()
 
 model.compile(
-    optimizer='adam',
+    optimizer=Adam(learning_rate=0.0001),
     loss = 'categorical_crossentropy',
     metrics=['accuracy']
 )
@@ -51,7 +49,7 @@ callbacks = [
 print("Pocetak treniranja")
 history = model.fit(
     X_train, y_train_cat,
-    validation_data=(X_test, y_test_cat),
+    validation_data=(X_val, y_val_cat),
     epochs=50,
     batch_size=32,
     callbacks=callbacks

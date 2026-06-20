@@ -1,0 +1,229 @@
+"""
+Debug mod za realtime - pokazuje top 5 kandidata i confidence
+da vidimo sta model tacno misli u svakom momentu
+"""
+import cv2
+import numpy as np
+import os
+import warnings
+warnings.filterwarnings('ignore')
+
+os.environ["KERAS_BACKEND"] = "tensorflow"
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+from keras.models import load_model
+import joblib
+from collections import deque
+
+from mediapipe.python.solutions import holistic as mp_holistic
+from mediapipe.python.solutions import drawing_utils as mp_drawing
+import mediapipe.python.solutions.hands as mp_hands
+
+model   = load_model("models/best_model.keras")
+scaler  = joblib.load("models/scaler.pkl")
+classes = np.load("models/classes.npy", allow_pickle=True)
+
+FRAME_SIZE = 33*4 + 21*3 + 21*3  # 258
+NUM_FRAMES = 40
+CONFIDENCE = 0.4
+
+def extract_keypoints(results):
+    if results.pose_landmarks:
+        pose = np.array([[lm.x, lm.y, lm.z, lm.visibility]
+                         for lm in results.pose_landmarks.landmark]).flatten()
+    else:
+        pose = np.zeros(33 * 4)
+
+    if results.left_hand_landmarks:
+        left = np.array([[lm.x, lm.y, lm.z]
+                         for lm in results.left_hand_landmarks.landmark]).flatten()
+    else:
+        left = np.zeros(21 * 3)
+
+    if results.right_hand_landmarks:
+        right = np.array([[lm.x, lm.y, lm.z]
+                          for lm in results.right_hand_landmarks.landmark]).flatten()
+    else:
+        right = np.zeros(21 * 3)
+
+    return np.concatenate([pose, left, right])
+
+# State machine
+IDLE       = "cekanje"
+RECORDING  = "snimam"
+PREDICTING = "predikujem"
+
+state            = IDLE
+record_buffer    = []
+predicted_letter = ""
+confidence_val   = 0.0
+current_word     = ""
+top5             = []   # lista (slovo, confidence) za prikaz
+
+cap = cv2.VideoCapture(0)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+
+with mp_holistic.Holistic(min_detection_confidence=0.5,
+                           min_tracking_confidence=0.5) as holistic:
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        image.flags.writeable = False
+        results = holistic.process(image)
+        image.flags.writeable = True
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+
+        # Crtanje keypointa
+        right_hand_style = mp_drawing.DrawingSpec(color=(0, 255, 0),   thickness=1, circle_radius=2)
+        right_conn_style  = mp_drawing.DrawingSpec(color=(0, 200, 0),   thickness=1)
+        left_hand_style  = mp_drawing.DrawingSpec(color=(255, 100, 0),  thickness=1, circle_radius=2)
+        left_conn_style   = mp_drawing.DrawingSpec(color=(200, 80,  0),  thickness=1)
+        pose_dot_style   = mp_drawing.DrawingSpec(color=(200, 200, 200), thickness=1, circle_radius=2)
+        pose_conn_style  = mp_drawing.DrawingSpec(color=(120, 120, 120), thickness=1)
+
+        if results.pose_landmarks:
+            face_indices = set(range(0, 11))
+            orig_vis = {}
+            for idx in face_indices:
+                lm = results.pose_landmarks.landmark[idx]
+                orig_vis[idx] = lm.visibility
+                lm.visibility = 0.0
+
+            mp_drawing.draw_landmarks(image, results.pose_landmarks,
+                mp_holistic.POSE_CONNECTIONS,
+                landmark_drawing_spec=pose_dot_style,
+                connection_drawing_spec=pose_conn_style)
+
+            for idx in face_indices:
+                results.pose_landmarks.landmark[idx].visibility = orig_vis[idx]
+
+            h_img, w_img = image.shape[:2]
+            for idx in face_indices:
+                lm = results.pose_landmarks.landmark[idx]
+                if lm.visibility > 0.3:
+                    cx = int(lm.x * w_img)
+                    cy = int(lm.y * h_img)
+                    cv2.circle(image, (cx, cy), 2, (0, 220, 255), -1)
+
+        mp_drawing.draw_landmarks(image, results.right_hand_landmarks,
+            mp_hands.HAND_CONNECTIONS,
+            landmark_drawing_spec=right_hand_style,
+            connection_drawing_spec=right_conn_style)
+        mp_drawing.draw_landmarks(image, results.left_hand_landmarks,
+            mp_hands.HAND_CONNECTIONS,
+            landmark_drawing_spec=left_hand_style,
+            connection_drawing_spec=left_conn_style)
+
+        keypoints    = extract_keypoints(results)
+        hand_detected = results.left_hand_landmarks or results.right_hand_landmarks
+
+        # State machine
+        if state == IDLE:
+            if hand_detected:
+                state         = RECORDING
+                record_buffer = [keypoints]
+                predicted_letter = ""
+                confidence_val   = 0.0
+                top5             = []
+
+        elif state == RECORDING:
+            record_buffer.append(keypoints)
+            if not hand_detected:
+                state         = IDLE
+                record_buffer = []
+            elif len(record_buffer) == NUM_FRAMES:
+                state = PREDICTING
+
+        elif state == PREDICTING:
+            X      = np.array(record_buffer)
+            X_2d   = X.reshape(1, NUM_FRAMES * FRAME_SIZE)
+            X_sc   = scaler.transform(X_2d)
+            X_3d   = X_sc.reshape(1, NUM_FRAMES, FRAME_SIZE)
+
+            probs  = model.predict(X_3d, verbose=0)[0]
+
+            # Top 5 kandidata
+            top_idx = np.argsort(probs)[::-1][:5]
+            top5    = [(classes[i], probs[i]) for i in top_idx]
+
+            class_idx      = top_idx[0]
+            confidence_val = probs[class_idx]
+            predicted_letter = classes[class_idx] if confidence_val >= CONFIDENCE else "?"
+
+            if not hand_detected:
+                state         = IDLE
+                record_buffer = []
+
+        # ============================================================
+        # UI
+        # ============================================================
+        h, w = image.shape[:2]
+
+        # Leva strana - glavni rezultat
+        cv2.rectangle(image, (0, h - 130), (w // 2, h), (0, 0, 0), -1)
+
+        state_color = (0, 255, 255) if state == RECORDING else (200, 200, 200)
+        cv2.putText(image, f"Stanje: {state}",
+                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, state_color, 1)
+
+        if state == RECORDING:
+            # Progress bar
+            progress = int((len(record_buffer) / NUM_FRAMES) * 300)
+            cv2.rectangle(image, (10, 50), (310, 65), (50, 50, 50), -1)
+            cv2.rectangle(image, (10, 50), (10 + progress, 65), (0, 255, 255), -1)
+            cv2.putText(image, f"{len(record_buffer)}/{NUM_FRAMES}",
+                        (315, 63), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+
+        cv2.putText(image, f"Slovo: {predicted_letter}",
+                    (10, h - 90), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 255, 0), 2)
+
+        # Confidence bar za glavno slovo
+        if confidence_val > 0:
+            bar_w = int(confidence_val * 200)
+            bar_color = (0, 255, 0) if confidence_val >= 0.7 else \
+                        (0, 165, 255) if confidence_val >= 0.4 else (0, 0, 255)
+            cv2.rectangle(image, (10, h - 75), (210, h - 60), (50, 50, 50), -1)
+            cv2.rectangle(image, (10, h - 75), (10 + bar_w, h - 60), bar_color, -1)
+            cv2.putText(image, f"{confidence_val * 100:.0f}%",
+                        (215, h - 62), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+        cv2.putText(image, f"Rec: {current_word}",
+                    (10, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+
+        cv2.putText(image, "ENTER=potvrdi  BACKSPACE=obrisi  SPACE=reset  ESC=izlaz",
+                    (10, h - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1)
+
+        # Desna strana - TOP 5 debug panel
+        panel_x = w - 280
+        cv2.rectangle(image, (panel_x - 10, 0), (w, 200), (20, 20, 20), -1)
+        cv2.putText(image, "TOP 5 KANDIDATI:", (panel_x, 25),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 1)
+
+        for rank, (lbl, prob) in enumerate(top5):
+            y_pos    = 55 + rank * 30
+            bar_len  = int(prob * 200)
+            color    = (0, 255, 0) if rank == 0 else (100, 100, 200)
+            cv2.rectangle(image, (panel_x, y_pos - 12), (panel_x + bar_len, y_pos + 3), color, -1)
+            cv2.putText(image, f"{lbl}: {prob*100:.1f}%",
+                        (panel_x, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+                        (255, 255, 255), 1)
+
+        cv2.imshow("Srpski znakovni jezik - DEBUG", image)
+
+        key = cv2.waitKey(1) & 0xFF
+        if key == 27:
+            break
+        elif key == 32:
+            current_word = ""
+        elif key == 13:
+            if predicted_letter and predicted_letter != "?":
+                current_word += predicted_letter
+        elif key == 8:
+            current_word = current_word[:-1]
+
+cap.release()
+cv2.destroyAllWindows()

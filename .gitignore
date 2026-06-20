@@ -5,3 +5,4 @@ models/*.keras
 models/*.pkl
 models/*.h5
 *.png
+tuner_results

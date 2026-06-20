@@ -56,7 +56,7 @@ def load_dataset(data_path, max_files_per_class = None):
         if max_files_per_class:
             files = files[:max_files_per_class]
 
-        print(f"Ucitaval {label} : {len((files))} fajlova...")
+        print(f"Ucitava {label} : {len((files))} fajlova...")
 
         for file_name in files:
             file_path = os.path.join(folder_path, file_name)
@@ -108,7 +108,6 @@ def analyze_dataset(X, y):
 
 if __name__ == "__main__" :
     print("Ucitavanje dataseta")
-    print("Za prvo testiranje ucitavamo 10 fajlova po klasi")
 
     X, y = load_dataset(DATA_PATH, max_files_per_class=None)
 
