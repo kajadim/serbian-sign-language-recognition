@@ -6,3 +6,9 @@ models/*.pkl
 models/*.h5
 *.png
 tuner_results
+.vscode/
+.idea/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
