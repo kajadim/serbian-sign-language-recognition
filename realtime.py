@@ -1,3 +1,7 @@
+"""
+Debug mod za realtime - pokazuje top 5 kandidata i confidence
+da vidimo sta model tacno misli u svakom momentu
+"""
 import cv2
 import numpy as np
 import os
@@ -10,89 +14,116 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 from keras.models import load_model
 import joblib
 from collections import deque
-
-
-import warnings
-warnings.filterwarnings('ignore')
+from interpolation import interpolate_sequence_gaps
+from body_normalization import normalize_sequence
+from curl_smoothing import smooth_curl_sequence
 
 from mediapipe.python.solutions import holistic as mp_holistic
 from mediapipe.python.solutions import drawing_utils as mp_drawing
 import mediapipe.python.solutions.hands as mp_hands
 
-# ============================================================
-# UCITAJ MODEL I POMOCNE FAJLOVE
-# ============================================================
-model   = load_model("models/best_model.keras")
-scaler  = joblib.load("models/scaler.pkl")
-classes = np.load("models/classes.npy", allow_pickle=True)
-
-FRAME_SIZE  = 33*4 + 21*3 + 21*3  # 258
-NUM_FRAMES  = 40
-CONFIDENCE  = 0.4  # minimalna sigurnost za prikaz
-
-
-# Buffer koji cuva poslednjih 40 frejmova
-buffer = deque(maxlen=NUM_FRAMES)
-
-# Za formiranje reci
-current_word   = ""
-last_letter    = ""
-stable_counter = 0
-STABLE_FRAMES  = 15  # koliko frejmova isto slovo mora biti prepoznato
-
-
-IDLE = "cekanje"      # ruka nije u sceni
-RECORDING = "snimam"  # ruka ušla, snimam 40 frejmova
-PREDICTING = "predikujem"  # skupio 40 frejmova, predikujem
-
-
-state = IDLE
-record_buffer = [] 
-predicted_letter = ""
-confidence_val   = 0.0
-current_word     = ""
+model   = load_model("models/best_model_v3.keras")
+scaler  = joblib.load("models/scaler_v3.pkl")
+classes = np.load("models/classes_v3.npy", allow_pickle=True)
 
 # ============================================================
-# MEDIAPIPE SETUP
+# CURL FEATURE-I (savijenost prstiju) - isto kao u prepare_dataset_v2.py
 # ============================================================
+WRIST = 0
+THUMB_TIP, THUMB_MCP = 4, 2
+INDEX_TIP, INDEX_MCP = 8, 5
+MIDDLE_TIP, MIDDLE_MCP = 12, 9
+RING_TIP, RING_MCP = 16, 13
+PINKY_TIP, PINKY_MCP = 20, 17
 
+FINGER_TIPS = [THUMB_TIP, INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP]
+FINGER_MCPS = [THUMB_MCP, INDEX_MCP, MIDDLE_MCP, RING_MCP, PINKY_MCP]
+
+POSE_LEN = 33 * 4
+HAND_LEN = 21 * 3
+LEFT_HAND_START = POSE_LEN
+RIGHT_HAND_START = POSE_LEN + HAND_LEN
+
+
+def get_hand_landmarks(frame, hand_start):
+    hand_flat = frame[hand_start: hand_start + HAND_LEN]
+    return hand_flat.reshape(21, 3)
+
+
+def finger_curl(landmarks, tip_idx, mcp_idx, wrist_idx=WRIST):
+    wrist = landmarks[wrist_idx]
+    tip = landmarks[tip_idx]
+    mcp = landmarks[mcp_idx]
+
+    if np.all(landmarks == 0):
+        return 0.0
+
+    dist_tip_wrist = np.linalg.norm(tip - wrist)
+    dist_mcp_wrist = np.linalg.norm(mcp - wrist) + 1e-6
+
+    return dist_tip_wrist / dist_mcp_wrist
+
+
+def compute_curl_features(frame):
+    left_hand = get_hand_landmarks(frame, LEFT_HAND_START)
+    right_hand = get_hand_landmarks(frame, RIGHT_HAND_START)
+
+    curls = []
+    for tip, mcp in zip(FINGER_TIPS, FINGER_MCPS):
+        curls.append(finger_curl(left_hand, tip, mcp))
+    for tip, mcp in zip(FINGER_TIPS, FINGER_MCPS):
+        curls.append(finger_curl(right_hand, tip, mcp))
+
+    return np.array(curls, dtype=np.float64)  # (10,)
+
+
+def add_curl_features_to_sequence(sequence):
+    """sequence: (n_frames, 258) -> (n_frames, 268)"""
+    curl_features = np.array([compute_curl_features(frame) for frame in sequence])
+    curl_features = smooth_curl_sequence(curl_features, window=3)
+    return np.concatenate([sequence, curl_features], axis=1)
+
+
+FRAME_SIZE = 33*4 + 21*3 + 21*3  # 258 (sirovih, pre dodavanja curl feature-a)
+NUM_FRAMES = 40
+CONFIDENCE = 0.4
 
 def extract_keypoints(results):
-    """Izvlaci keypoints iz MediaPipe rezultata - isto kao u datasetu."""
-    
-    # Pose (telo) - 33 tacke x 4 vrednosti
     if results.pose_landmarks:
-        pose = np.array([[lm.x, lm.y, lm.z, lm.visibility] 
+        pose = np.array([[lm.x, lm.y, lm.z, lm.visibility]
                          for lm in results.pose_landmarks.landmark]).flatten()
     else:
         pose = np.zeros(33 * 4)
-    
-    # Leva ruka - 21 tacka x 3 vrednosti
+
     if results.left_hand_landmarks:
-        left = np.array([[lm.x, lm.y, lm.z] 
+        left = np.array([[lm.x, lm.y, lm.z]
                          for lm in results.left_hand_landmarks.landmark]).flatten()
     else:
         left = np.zeros(21 * 3)
-    
-    # Desna ruka - 21 tacka x 3 vrednosti
+
     if results.right_hand_landmarks:
-        right = np.array([[lm.x, lm.y, lm.z] 
+        right = np.array([[lm.x, lm.y, lm.z]
                           for lm in results.right_hand_landmarks.landmark]).flatten()
     else:
         right = np.zeros(21 * 3)
-    
-    return np.concatenate([pose, left, right])  # (258,)
 
+    return np.concatenate([pose, left, right])
 
-# ============================================================
-# GLAVNA PETLJA
-# ============================================================
+# State machine
+IDLE       = "cekanje"
+RECORDING  = "snimam"
+PREDICTING = "predikujem"
+
+state            = IDLE
+record_buffer    = []
+predicted_letter = ""
+confidence_val   = 0.0
+current_word     = ""
+top3             = []   # lista (slovo, confidence) za prikaz
+
 cap = cv2.VideoCapture(0)
-
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-
-
 
 with mp_holistic.Holistic(min_detection_confidence=0.5,
                            min_tracking_confidence=0.5) as holistic:
@@ -101,261 +132,164 @@ with mp_holistic.Holistic(min_detection_confidence=0.5,
         if not ret:
             break
 
-        # MediaPipe obrada
         image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         image.flags.writeable = False
         results = holistic.process(image)
         image.flags.writeable = True
         image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
-         # Stilovi za crtanje keypointa
-        # Desna ruka - zelena
-        right_hand_style = mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=1, circle_radius=2)
-        right_conn_style  = mp_drawing.DrawingSpec(color=(0, 200, 0), thickness=1)
+        # Crtanje keypointa
+        right_hand_style = mp_drawing.DrawingSpec(color=(0, 255, 0),   thickness=1, circle_radius=2)
+        right_conn_style  = mp_drawing.DrawingSpec(color=(0, 200, 0),   thickness=1)
+        left_hand_style  = mp_drawing.DrawingSpec(color=(255, 100, 0),  thickness=1, circle_radius=2)
+        left_conn_style   = mp_drawing.DrawingSpec(color=(200, 80,  0),  thickness=1)
+        pose_dot_style   = mp_drawing.DrawingSpec(color=(200, 200, 200), thickness=1, circle_radius=2)
+        pose_conn_style  = mp_drawing.DrawingSpec(color=(120, 120, 120), thickness=1)
 
-        # Leva ruka - plava
-        left_hand_style  = mp_drawing.DrawingSpec(color=(255, 100, 0), thickness=1, circle_radius=2)
-        left_conn_style   = mp_drawing.DrawingSpec(color=(200, 80,  0), thickness=1)
-
-        # Telo (pose) - bela tacka, siva linija; pose sadrzi i face tacke (0-10),
-        # pa crtamo samo tacke tela (11+) rucno kako bismo preskocili lice
-        pose_dot_style  = mp_drawing.DrawingSpec(color=(200, 200, 200), thickness=1, circle_radius=2)
-        pose_conn_style = mp_drawing.DrawingSpec(color=(120, 120, 120), thickness=1)
-
-        # Crtamo pose (telo + lice) - lice je zuto, telo sivo
         if results.pose_landmarks:
-            h_img, w_img = image.shape[:2]
-            face_indices = set(range(0, 11))  # 0-10 su lice/glava u Holistic pose
-
-            # Prvo nacrtaj telo standardnom funkcijom
-            # Privremeno sakrij face tacke
+            face_indices = set(range(0, 11))
             orig_vis = {}
             for idx in face_indices:
                 lm = results.pose_landmarks.landmark[idx]
                 orig_vis[idx] = lm.visibility
                 lm.visibility = 0.0
 
-            mp_drawing.draw_landmarks(
-                image, results.pose_landmarks,
+            mp_drawing.draw_landmarks(image, results.pose_landmarks,
                 mp_holistic.POSE_CONNECTIONS,
                 landmark_drawing_spec=pose_dot_style,
-                connection_drawing_spec=pose_conn_style
-            )
+                connection_drawing_spec=pose_conn_style)
 
-            # Vrati i rucno nacrtaj face tacke zucom bojom, malim kruzicima
             for idx in face_indices:
                 results.pose_landmarks.landmark[idx].visibility = orig_vis[idx]
 
+            h_img, w_img = image.shape[:2]
             for idx in face_indices:
                 lm = results.pose_landmarks.landmark[idx]
                 if lm.visibility > 0.3:
                     cx = int(lm.x * w_img)
                     cy = int(lm.y * h_img)
-                    cv2.circle(image, (cx, cy), 2, (0, 220, 255), -1)  # zuto-narandzasta
+                    cv2.circle(image, (cx, cy), 2, (0, 220, 255), -1)
 
-        mp_drawing.draw_landmarks(
-            image, results.right_hand_landmarks,
+        mp_drawing.draw_landmarks(image, results.right_hand_landmarks,
             mp_hands.HAND_CONNECTIONS,
             landmark_drawing_spec=right_hand_style,
-            connection_drawing_spec=right_conn_style
-        )
-        mp_drawing.draw_landmarks(
-            image, results.left_hand_landmarks,
+            connection_drawing_spec=right_conn_style)
+        mp_drawing.draw_landmarks(image, results.left_hand_landmarks,
             mp_hands.HAND_CONNECTIONS,
             landmark_drawing_spec=left_hand_style,
-            connection_drawing_spec=left_conn_style
-        )
+            connection_drawing_spec=left_conn_style)
 
-        # Izvuci keypoints i dodaj u buffer
-        keypoints = extract_keypoints(results)
-        # buffer.append(keypoints)
-
+        keypoints    = extract_keypoints(results)
         hand_detected = results.left_hand_landmarks or results.right_hand_landmarks
 
-        # # Stilovi za crtanje keypointa
-        # # Desna ruka - zelena
-        # right_hand_style = mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=1, circle_radius=2)
-        # right_conn_style  = mp_drawing.DrawingSpec(color=(0, 200, 0), thickness=1)
-
-        # # Leva ruka - plava
-        # left_hand_style  = mp_drawing.DrawingSpec(color=(255, 100, 0), thickness=1, circle_radius=2)
-        # left_conn_style   = mp_drawing.DrawingSpec(color=(200, 80,  0), thickness=1)
-
-        # # Telo (pose) - bela tacka, siva linija; pose sadrzi i face tacke (0-10),
-        # # pa crtamo samo tacke tela (11+) rucno kako bismo preskocili lice
-        # pose_dot_style  = mp_drawing.DrawingSpec(color=(200, 200, 200), thickness=1, circle_radius=2)
-        # pose_conn_style = mp_drawing.DrawingSpec(color=(120, 120, 120), thickness=1)
-
-        # # Crtaj keypoints na slici
-        # mp_drawing.draw_landmarks(image, results.right_hand_landmarks,
-        #                           mp_hands.HAND_CONNECTIONS)
-        # mp_drawing.draw_landmarks(image, results.left_hand_landmarks,
-        #                           mp_hands.HAND_CONNECTIONS)
-        # mp_drawing.draw_landmarks(image, results.pose_landmarks,
-        #                   mp_holistic.POSE_CONNECTIONS)
-
-        # # Izvuci keypoints i dodaj u buffer
-        # keypoints = extract_keypoints(results)
-        # # buffer.append(keypoints)
-
-        # hand_detected = results.left_hand_landmarks or results.right_hand_landmarks
-
-        # if not hand_detected:
-        #     predicted_letter = ""
-        #     confidence_val = 0.0
-        #     buffer.clear()
-
-        # predicted_letter = ""
-        # confidence_val   = 0.0
-
-        # # Kada imamo 40 frejmova - predikuj
-        # if len(buffer) == NUM_FRAMES:
-        #     # Pripremi ulaz za model
-        #     X = np.array(buffer)                          # (40, 258)
-        #     X_2d = X.reshape(1, NUM_FRAMES * FRAME_SIZE)  # (1, 10320)
-        #     X_scaled = scaler.transform(X_2d)             # normalizacija
-        #     X_3d = X_scaled.reshape(1, NUM_FRAMES, FRAME_SIZE)  # (1, 40, 258)
-
-        #     # Predikuj
-        #     prediction  = model.predict(X_3d, verbose=0)
-        #     class_idx   = np.argmax(prediction)
-        #     confidence_val = prediction[0][class_idx]
-
-        #     if confidence_val >= CONFIDENCE:
-        #         predicted_letter = classes[class_idx]
-
-        #         # Formiranje reci - dodaj slovo samo ako je stabilno
-        #         if predicted_letter == last_letter:
-        #             stable_counter += 1
-        #         else:
-        #             stable_counter = 0
-        #             last_letter = predicted_letter
-
-                # if stable_counter == STABLE_FRAMES:
-                #     current_word += predicted_letter
-                #     stable_counter = 0
-
+        # State machine
         if state == IDLE:
             if hand_detected:
-                state = RECORDING
+                state         = RECORDING
                 record_buffer = [keypoints]
                 predicted_letter = ""
-                confidence_val = 0.0
+                confidence_val   = 0.0
+                top3             = []
 
         elif state == RECORDING:
             record_buffer.append(keypoints)
-
             if not hand_detected:
-                # Ruka izasla pre 40 frejmova - resetuj
-                state = IDLE
+                state         = IDLE
                 record_buffer = []
             elif len(record_buffer) == NUM_FRAMES:
-                # Skupili 40 frejmova - predikuj
                 state = PREDICTING
 
         elif state == PREDICTING:
-            # Predikuj
-            X = np.array(record_buffer)
-            X_2d = X.reshape(1, NUM_FRAMES * FRAME_SIZE)
-            X_scaled = scaler.transform(X_2d)
-            X_3d = X_scaled.reshape(1, NUM_FRAMES, FRAME_SIZE)
+            X_raw = np.array(record_buffer)                          # (40, 258)
+            X_raw, n_left_filled, n_right_filled = interpolate_sequence_gaps(X_raw)
+            if n_left_filled > 0 or n_right_filled > 0:
+                print(f"Popunjeno rupa - leva ruka: {n_left_filled}, desna ruka: {n_right_filled}")
+            X_norm_body = normalize_sequence(X_raw)                      # normalizacija na telo (ramena)
+            X_with_curl = add_curl_features_to_sequence(X_norm_body)     # (40, 268)
+            X_2d   = X_with_curl.reshape(1, NUM_FRAMES * X_with_curl.shape[1])
+            X_sc   = scaler.transform(X_2d)
+            X_3d   = X_sc.reshape(1, NUM_FRAMES, X_with_curl.shape[1])
 
-            prediction = model.predict(X_3d, verbose=0)
-            class_idx = np.argmax(prediction)
-            confidence_val = prediction[0][class_idx]
+            probs  = model.predict(X_3d, verbose=0)[0]
 
-            if confidence_val >= CONFIDENCE:
-                predicted_letter = classes[class_idx]
-            else:
-                predicted_letter = "?"
+            # Top 5 kandidata
+            top_idx = np.argsort(probs)[::-1][:3]
+            top3    = [(classes[i], probs[i]) for i in top_idx]
 
-            # Cekaj da ruka izadje pa ponovi
+            class_idx      = top_idx[0]
+            confidence_val = probs[class_idx]
+            predicted_letter = classes[class_idx] if confidence_val >= CONFIDENCE else "?"
+
             if not hand_detected:
-                state = IDLE
+                state         = IDLE
                 record_buffer = []
 
         # ============================================================
-        # PRIKAZ NA EKRANU
+        # UI
         # ============================================================
-        # h, w = image.shape[:2]
-
-        # # Pozadina za tekst
-        # cv2.rectangle(image, (0, h-120), (w, h), (0,0,0), -1)
-
-        # # Trenutno prepoznato slovo
-        # cv2.putText(image, f"Slovo: {predicted_letter}",
-        #             (10, h-80), cv2.FONT_HERSHEY_SIMPLEX,
-        #             1.2, (0,255,0), 2)
-
-        # # Sigurnost
-        # cv2.putText(image, f"Sigurnost: {confidence_val*100:.0f}%",
-        #             (10, h-50), cv2.FONT_HERSHEY_SIMPLEX,
-        #             0.7, (255,255,0), 2)
-
-        # # Formirana rec
-        # cv2.putText(image, f"Rec: {current_word}",
-        #             (10, h-15), cv2.FONT_HERSHEY_SIMPLEX,
-        #             1.0, (255,255,255), 2)
-
-        # # Uputstvo
-        # cv2.putText(image, "SPACE=obrisi rec  ESC=izlaz",
-        #             (w-320, 25), cv2.FONT_HERSHEY_SIMPLEX,
-        #             0.6, (200,200,200), 1)
-
-        # # Broj frejmova u bufferu
-        # cv2.putText(image, f"Buffer: {len(buffer)}/{NUM_FRAMES}",
-        #             (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
-        #             0.6, (200,200,200), 1)
-
-        # cv2.imshow("Srpski znakovni jezik", image)
-
-        # # Tasteri
-        # key = cv2.waitKey(1) & 0xFF
-        # if key == 27:    # ESC - izlaz
-        #     break
-        # elif key == 32:  # SPACE - obrisi rec
-        #     current_word = ""
-        # elif key == 13:    # ENTER - potvrdi trenutno slovo odmah
-        #     if predicted_letter:
-        #         current_word += predicted_letter
-        #         stable_counter = 0
-        # elif key == 8:     # BACKSPACE - obrisi zadnje slovo
-        #     current_word = current_word[:-1]
-
         h, w = image.shape[:2]
 
-        cv2.rectangle(image, (0, h-130), (w, h), (0,0,0), -1)
+        # Leva strana - glavni rezultat
+        cv2.rectangle(image, (0, h - 130), (w // 2, h), (0, 0, 0), -1)
 
+        state_color = (0, 255, 255) if state == RECORDING else (200, 200, 200)
         cv2.putText(image, f"Stanje: {state}",
-                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 1)
+                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, state_color, 1)
 
         if state == RECORDING:
-            cv2.putText(image, f"Frejmovi: {len(record_buffer)}/{NUM_FRAMES}",
-                        (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 1)
+            # Progress bar
+            progress = int((len(record_buffer) / NUM_FRAMES) * 300)
+            cv2.rectangle(image, (10, 50), (310, 65), (50, 50, 50), -1)
+            cv2.rectangle(image, (10, 50), (10 + progress, 65), (0, 255, 255), -1)
+            cv2.putText(image, f"{len(record_buffer)}/{NUM_FRAMES}",
+                        (315, 63), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
         cv2.putText(image, f"Slovo: {predicted_letter}",
-                    (10, h-90), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0,255,0), 2)
+                    (10, h - 90), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 255, 0), 2)
 
-        cv2.putText(image, f"Sigurnost: {confidence_val*100:.0f}%",
-                    (10, h-60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,0), 2)
+        # Confidence bar za glavno slovo
+        if confidence_val > 0:
+            bar_w = int(confidence_val * 200)
+            bar_color = (0, 255, 0) if confidence_val >= 0.7 else \
+                        (0, 165, 255) if confidence_val >= 0.4 else (0, 0, 255)
+            cv2.rectangle(image, (10, h - 75), (210, h - 60), (50, 50, 50), -1)
+            cv2.rectangle(image, (10, h - 75), (10 + bar_w, h - 60), bar_color, -1)
+            cv2.putText(image, f"{confidence_val * 100:.0f}%",
+                        (215, h - 62), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
         cv2.putText(image, f"Rec: {current_word}",
-                    (10, h-25), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255,255,255), 2)
+                    (10, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
 
         cv2.putText(image, "ENTER=potvrdi  BACKSPACE=obrisi  SPACE=reset  ESC=izlaz",
-                    (10, h-5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150,150,150), 1)
+                    (10, h - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1)
+
+        # Desna strana - TOP 3 panel
+        panel_x = w - 280
+        cv2.rectangle(image, (panel_x - 10, 0), (w, 140), (20, 20, 20), -1)
+        cv2.putText(image, "TOP 3 KANDIDATA:", (panel_x, 25),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 1)
+
+        for rank, (lbl, prob) in enumerate(top3):
+            y_pos    = 55 + rank * 30
+            bar_len  = int(prob * 200)
+            color    = (0, 255, 0) if rank == 0 else (100, 100, 200)
+            cv2.rectangle(image, (panel_x, y_pos - 12), (panel_x + bar_len, y_pos + 3), color, -1)
+            cv2.putText(image, f"{lbl}: {prob*100:.1f}%",
+                        (panel_x, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+                        (255, 255, 255), 1)
 
         cv2.imshow("Srpski znakovni jezik", image)
 
         key = cv2.waitKey(1) & 0xFF
-        if key == 27:   # ESC
+        if key == 27:
             break
-        elif key == 32: # SPACE - obrisi rec
+        elif key == 32:
             current_word = ""
-        elif key == 13: # ENTER - potvrdi slovo
+        elif key == 13:
             if predicted_letter and predicted_letter != "?":
                 current_word += predicted_letter
-        elif key == 8:  # BACKSPACE
+        elif key == 8:
             current_word = current_word[:-1]
+
 cap.release()
 cv2.destroyAllWindows()
