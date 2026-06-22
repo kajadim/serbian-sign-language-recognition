@@ -198,8 +198,6 @@ with mp_holistic.Holistic(min_detection_confidence=0.5,
         elif state == PREDICTING:
             X_raw = np.array(record_buffer)                          # (40, 258)
             X_raw, n_left_filled, n_right_filled = interpolate_sequence_gaps(X_raw)
-            if n_left_filled > 0 or n_right_filled > 0:
-                print(f"Popunjeno rupa - leva ruka: {n_left_filled}, desna ruka: {n_right_filled}")
             X_norm_body = normalize_sequence(X_raw)                      # normalization
             X_with_curl = add_curl_features_to_sequence(X_norm_body)     # (40, 268)
             X_2d   = X_with_curl.reshape(1, NUM_FRAMES * X_with_curl.shape[1])
