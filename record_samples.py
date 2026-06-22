@@ -1,16 +1,3 @@
-"""
-Snimanje novih primera za dataset - identican format originalnom datasetu.
-Cuva .npy fajlove u data/<SLOVO>/ folder, gotove za load_and_explore_data.py
-
-KORISCENJE:
-    python record_samples.py D
-    python record_samples.py ZH
-    python record_samples.py V
-
-Kontrole:
-    SPACE - pokreni/zaustavi rucno (opciono, inace je automatski)
-    ESC   - izlaz
-"""
 import cv2
 import numpy as np
 import os
@@ -26,13 +13,10 @@ from mediapipe.python.solutions import holistic as mp_holistic
 from mediapipe.python.solutions import drawing_utils as mp_drawing
 import mediapipe.python.solutions.hands as mp_hands
 
-# ============================================================
-# PODESAVANJA - ista kao u datasetu (FRAME_SIZE=258, NUM_FRAMES=40)
-# ============================================================
 FRAME_SIZE = 33 * 4 + 21 * 3 + 21 * 3  # 258
 NUM_FRAMES = 40
 DATA_PATH  = "data"
-OUT_OF_SCENE_GRACE = 5  # frejmova tolerancije pre nego sto se ruka smatra "izasla"
+OUT_OF_SCENE_GRACE = 5  
 
 
 def extract_keypoints(results):
@@ -59,8 +43,7 @@ def extract_keypoints(results):
 
 def main():
     if len(sys.argv) < 2:
-        print("Koriscenje: python record_samples.py <SLOVO>")
-        print("Primer: python record_samples.py D")
+        print("Example: python record_samples.py D")
         sys.exit(1)
 
     letter = sys.argv[1].upper()
@@ -68,19 +51,20 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
 
     existing = [f for f in os.listdir(out_dir) if f.endswith('.npy')]
-    print(f"Slovo: {letter}")
-    print(f"Trenutno u datasetu: {len(existing)} snimaka")
-    print(f"Novi snimci ce se dodati u: {out_dir}")
-    print("\nUputstvo:")
-    print("  - Drzite ruke van scene dok ne pocnete znak")
-    print("  - Cim ruka udje u kadar, snimanje automatski pocinje")
-    print("  - Snima se tacno 40 frejmova")
-    print("  - Izvedite znak prirodno, ruka ulazi - znak - ruka izlazi")
-    print("  - ESC za izlaz\n")
+    print(f"Letter: {letter}")
+    print(f"Currently in the dataset: {len(existing)} recordings")
+    print(f"New recordings will be saved to: {out_dir}")
 
-    IDLE = "cekanje"
-    RECORDING = "snimam"
-    SAVED = "sacuvano"
+    print("\nInstructions:")
+    print("  - Keep your hands out of the frame before starting the sign")
+    print("  - Recording starts automatically as soon as a hand enters the frame")
+    print("  - Exactly 40 frames will be recorded")
+    print("  - Perform the sign naturally: hand enters → sign → hand exits")
+    print("  - Press ESC to exit\n")
+
+    IDLE = "waiting"
+    RECORDING = "recording"
+    SAVED = "saved"
 
     state = IDLE
     record_buffer = []
@@ -105,7 +89,6 @@ def main():
             image.flags.writeable = True
             image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
-            # Crtanje (zelena=desna, plava=leva, siva=telo, zuta=lice)
             right_style = mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=1, circle_radius=2)
             right_conn  = mp_drawing.DrawingSpec(color=(0, 200, 0), thickness=1)
             left_style  = mp_drawing.DrawingSpec(color=(255, 100, 0), thickness=1, circle_radius=2)
@@ -144,9 +127,7 @@ def main():
             hand_detected = bool(results.left_hand_landmarks or results.right_hand_landmarks)
 
             # ============================================================
-            # STATE MACHINE - identicna logika originalnom datasetu:
-            # ruka udje -> snimaj 40 frejmova -> sacuvaj
-            # 5 frejmova tolerancije ako ruka nakratko "trepne" iz detekcije
+            # STATE MACHINE
             # ============================================================
             if state == IDLE:
                 if hand_detected:
@@ -160,10 +141,9 @@ def main():
                     out_of_scene_count = 0
                 else:
                     out_of_scene_count += 1
-                    record_buffer.append(keypoints)  # i dalje dodaj (nule)
+                    record_buffer.append(keypoints)
 
                 if len(record_buffer) >= NUM_FRAMES:
-                    # Sacuvaj tacno 40 frejmova
                     data_to_save = np.array(record_buffer[:NUM_FRAMES], dtype=np.float64)
                     timestamp = int(time.time() * 1000)
                     filename = f"{timestamp}-MANUAL.npy"
@@ -220,12 +200,8 @@ def main():
 
     cap.release()
     cv2.destroyAllWindows()
-    print(f"\nZavrseno! Snimljeno {saved_count} novih primera za slovo '{letter}'.")
-    print(f"Fajlovi su u: {out_dir}")
-    print("\nSledeci koraci:")
-    print("  1. python load_and_explore_data.py   (proveri da se novi snimci ucitavaju)")
-    print("  2. python prepare_dataset.py          (ponovo pripremi train/val/test split)")
-    print("  3. python train_model.py ili finetune  (retreniraj model)")
+    print(f"\nCompleted! {saved_count} new samples were recorded for the letter '{letter}'.")
+    print(f"Files saved in: {out_dir}")
 
 
 if __name__ == "__main__":

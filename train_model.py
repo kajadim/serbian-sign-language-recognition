@@ -1,7 +1,3 @@
-"""
-Trening modela V3 - normalizacija na telo + curl feature-i.
-Pokrenuti POSLE prepare_dataset_v3.py
-"""
 import numpy as np
 import os
 
@@ -15,13 +11,13 @@ from keras.optimizers import Adam
 import matplotlib.pyplot as plt
 
 
-X_train = np.load("models/X_train_v3.npy")
-y_train = np.load("models/y_train_v3.npy")
-X_val   = np.load("models/X_val_v3.npy")
-y_val   = np.load("models/y_val_v3.npy")
-X_test  = np.load("models/X_test_v3.npy")
-y_test  = np.load("models/y_test_v3.npy")
-classes = np.load("models/classes_v3.npy", allow_pickle=True)
+X_train = np.load("models/X_train.npy")
+y_train = np.load("models/y_train.npy")
+X_val   = np.load("models/X_val.npy")
+y_val   = np.load("models/y_val.npy")
+X_test  = np.load("models/X_test.npy")
+y_test  = np.load("models/y_test.npy")
+classes = np.load("models/classes.npy", allow_pickle=True)
 
 NUM_CLASSES = len(classes)
 N_FRAMES    = X_train.shape[1]
@@ -53,11 +49,11 @@ model.compile(
 )
 
 callbacks = [
-    ModelCheckpoint("models/best_model_v3.keras", save_best_only=True, monitor='val_accuracy'),
+    ModelCheckpoint("models/best_model.keras", save_best_only=True, monitor='val_accuracy'),
     EarlyStopping(patience=10, monitor='val_accuracy', restore_best_weights=True)
 ]
 
-print("Pocetak treniranja V3 modela (normalizacija na telo + curl)...")
+print("Model training started (body normalization + curl features)...")
 history = model.fit(
     X_train, y_train_cat,
     validation_data=(X_val, y_val_cat),
@@ -67,28 +63,28 @@ history = model.fit(
 )
 
 loss, accuracy = model.evaluate(X_test, y_test_cat)
-print(f"Tacnost V3 modela na test setu: {accuracy*100:.2f}%")
+print(f"Test set accuracy of the model: {accuracy*100:.2f}%")
 
 plt.figure(figsize=(12, 4))
 
 plt.subplot(1, 2, 1)
-plt.plot(history.history['accuracy'], label='Trening')
-plt.plot(history.history['val_accuracy'], label='Validacija')
-plt.title('Tacnost tokom treninga (V3 - normalizacija na telo)')
-plt.xlabel('Epoha')
-plt.ylabel('Tacnost')
+plt.plot(history.history['accuracy'], label='Training Accuracy')
+plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
+plt.title('Training Accuracy Progress')
+plt.xlabel('Epoch')
+plt.ylabel('Accuracy')
 plt.legend()
 
 plt.subplot(1, 2, 2)
-plt.plot(history.history['loss'], label='Trening')
-plt.plot(history.history['val_loss'], label='Validacija')
-plt.title('Greska tokom treninga (V3)')
-plt.xlabel('Epoha')
-plt.ylabel('Greska')
+plt.plot(history.history['loss'], label='Training Loss')
+plt.plot(history.history['val_loss'], label='Validation Loss')
+plt.title('Loss during training (V3)')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
 plt.legend()
 
 plt.tight_layout()
-plt.savefig('trening_rezultati_v3.png')
+plt.savefig('training_results.png')
 plt.show()
 
-print("Gotovo! Model sacuvan u models/best_model_v3.keras")
+print("Training completed! Model saved as models/best_model.keras")

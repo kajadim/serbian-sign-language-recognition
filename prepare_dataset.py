@@ -1,18 +1,3 @@
-"""
-Priprema dataseta V3:
-  1. Normalizacija svih koordinata relativno na ramena (resava problem
-     udaljenosti od kamere / pozicije u kadru)
-  2. Curl feature-i za svaki prst (resava M/N tip problema)
-
-Input modela ce biti (40, 268) - isto kao V2, ali sada su sirove
-koordinate (258 od toga) normalizovane na telo pre racunanja curl-a.
-
-Pokrenuti UMESTO prepare_dataset_v2.py:
-    python prepare_dataset_v3.py
-
-Zatim trenirati:
-    python train_model_v3.py
-"""
 import numpy as np
 import os
 from sklearn.preprocessing import LabelEncoder
@@ -24,9 +9,6 @@ from interpolation import interpolate_sequence_gaps
 from curl_smoothing import smooth_curl_sequence
 import joblib
 
-# ============================================================
-# CURL FEATURE-I (isto kao u prepare_dataset_v2.py)
-# ============================================================
 WRIST = 0
 THUMB_TIP, THUMB_MCP = 4, 2
 INDEX_TIP, INDEX_MCP = 8, 5
@@ -76,7 +58,6 @@ def compute_curl_features(frame):
 
 
 def add_curl_features_to_sequence(sequence, smooth=True):
-    """sequence: (n_frames, 258) -> (n_frames, 268)"""
     curl_features = np.array([compute_curl_features(frame) for frame in sequence])
     if smooth:
         curl_features = smooth_curl_sequence(curl_features, window=3)
@@ -84,14 +65,6 @@ def add_curl_features_to_sequence(sequence, smooth=True):
 
 
 def process_sequence_v3(sequence):
-    """
-    Puni V3 pipeline za jednu sekvencu:
-      1. Interpoliraj rupe (kratka gubljenja detekcije usred pokreta)
-      2. Normalizuj na telo (ramena)
-      3. Dodaj curl feature-e (sa temporalnim zagladjivanjem - smanjuje sum
-         koji se uvecava na velikim udaljenostima od kamere)
-    sequence: (n_frames, 258) -> (n_frames, 268)
-    """
     interpolated, _, _ = interpolate_sequence_gaps(sequence)
     normalized = normalize_sequence(interpolated)
     with_curl = add_curl_features_to_sequence(normalized)
@@ -99,23 +72,22 @@ def process_sequence_v3(sequence):
 
 
 if __name__ == "__main__":
-    print("Ucitavanje dataseta..")
+    print("Loading dataset...")
     X_raw, y_raw = load_dataset(DATA_PATH)
-    print(f"Ukupno snimaka: {len(X_raw)}")
+    print(f"Total recordings: {len(X_raw)}")
 
-    print("\nObrada V3 (normalizacija na telo + curl feature-i)...")
-    print("(Ovo moze potrajati nekoliko minuta)")
+    print("\nProcessing (body normalization + curl features)...")
 
     X_processed = []
     for i, seq in enumerate(X_raw):
         seq_v3 = process_sequence_v3(seq)
         X_processed.append(seq_v3)
         if (i + 1) % 1000 == 0:
-            print(f"  Obradjeno {i + 1}/{len(X_raw)}...")
+            print(f"  Processed {i + 1}/{len(X_raw)}...")
 
     X = np.array(X_processed, dtype=np.float32)
-    print(f"\nOblik X (V3): {X.shape}")
-    print(f"  258 normalizovanih koordinata + 10 curl feature-a = {X.shape[2]} po frejmu")
+    print(f"\nShape of X: {X.shape}")
+    print(f"  258 normalized coordinates + 10 curl features = {X.shape[2]} features per frame")
 
     n_samples, n_frames, n_features = X.shape
     X_2d = X.reshape(n_samples, n_frames * n_features)
@@ -124,7 +96,7 @@ if __name__ == "__main__":
     X_norm_2d = scaler.fit_transform(X_2d)
     X_norm = X_norm_2d.reshape(n_samples, n_frames, n_features)
 
-    print(f"Normalizacija (MinMax) gotova. Min: {X_norm.min():.2f}, Max: {X_norm.max():.2f}")
+    print(f"Min-Max scaling completed. Min: {X_norm.min():.2f}, Max: {X_norm.max():.2f}")
 
     le = LabelEncoder()
     y_encoded = le.fit_transform(y_raw)
@@ -145,20 +117,20 @@ if __name__ == "__main__":
         stratify=y_temp
     )
 
-    print(f"\nPodela dataseta:")
-    print(f"  Trening: {X_train.shape[0]} snimaka")
-    print(f"  Validacija: {X_val.shape[0]} snimaka")
-    print(f"  Test   : {X_test.shape[0]} snimaka")
+    print(f"\nDataset split:")
+    print(f"  Training   : {X_train.shape[0]} recordings")
+    print(f"  Validation : {X_val.shape[0]} recordings")
+    print(f"  Test       : {X_test.shape[0]} recordings")
 
     os.makedirs("models", exist_ok=True)
-    np.save("models/X_train_v3.npy", X_train)
-    np.save("models/X_val_v3.npy", X_val)
-    np.save("models/X_test_v3.npy", X_test)
-    np.save("models/y_train_v3.npy", y_train)
-    np.save("models/y_val_v3.npy", y_val)
-    np.save("models/y_test_v3.npy", y_test)
-    np.save("models/classes_v3.npy", le.classes_)
-    joblib.dump(scaler, "models/scaler_v3.pkl")
+    np.save("models/X_train.npy", X_train)
+    np.save("models/X_val.npy", X_val)
+    np.save("models/X_test.npy", X_test)
+    np.save("models/y_train.npy", y_train)
+    np.save("models/y_val.npy", y_val)
+    np.save("models/y_test.npy", y_test)
+    np.save("models/classes.npy", le.classes_)
+    joblib.dump(scaler, "models/scaler.pkl")
 
-    print(f"\nSvi fajlovi (V3) sacuvani u 'models/' folder!")
-    print(f"Feature broj po frejmu: {n_features}")
+    print("\nAll V3 files have been saved to the 'models/' directory!")
+    print(f"Number of features per frame: {n_features}")

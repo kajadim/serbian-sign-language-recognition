@@ -16,30 +16,30 @@ from keras.callbacks import EarlyStopping
 def build_model(hp):
     model = Sequential()
     
-    # Prvi LSTM sloj 
+    # First LSTM layer 
     hp_lstm_1 = hp.Int('lstm_1_units', min_value=64, max_value=256, step=64)
-    model.add(LSTM(units=hp_lstm_1, return_sequences=True, input_shape=(40, 258)))
+    model.add(LSTM(units=hp_lstm_1, return_sequences=True, input_shape=(N_FRAMES, N_FEATURES)))
     
-    # Prvi Dropout 
+    # First Dropout 
     hp_dropout_1 = hp.Float('dropout_1', min_value=0.1, max_value=0.5, step=0.1)
     model.add(Dropout(rate=hp_dropout_1))
     
-    # Drugi LSTM sloj 
+    # Second LSTM layer 
     hp_lstm_2 = hp.Int('lstm_2_units', min_value=32, max_value=128, step=32)
     model.add(LSTM(units=hp_lstm_2, return_sequences=False))
     
-    # Drugi Dropout
+    # Second Dropout
     hp_dropout_2 = hp.Float('dropout_2', min_value=0.1, max_value=0.5, step=0.1)
     model.add(Dropout(rate=hp_dropout_2))
     
-    # Dense sloj 
+    # Dense layer 
     hp_dense_units = hp.Int('dense_units', min_value=32, max_value=128, step=32)
     model.add(Dense(units=hp_dense_units, activation='relu'))
     
-    # Izlazni sloj 
+    # Output sloj 
     model.add(Dense(NUM_CLASSES, activation='softmax'))
     
-    # Biranje brzine učenja (Learning Rate)
+    # Learning Rate
     hp_lr = hp.Choice('learning_rate', values=[1e-2, 1e-3, 1e-4])
     
     model.compile(
@@ -50,7 +50,7 @@ def build_model(hp):
     return model
 
 if __name__ == "__main__":
-    print("Učitavanje podataka za tjuning...")
+    print("Loading the data...")
     X_train = np.load("models/X_train.npy")
     y_train = np.load("models/y_train.npy")
     X_val = np.load("models/X_val.npy")
@@ -58,7 +58,14 @@ if __name__ == "__main__":
     classes = np.load("models/classes.npy", allow_pickle=True)
     
     NUM_CLASSES = len(classes)
-    
+    N_FRAMES    = X_train.shape[1]
+    N_FEATURES  = X_train.shape[2]
+
+
+    print(f"Input shape: ({N_FRAMES}, {N_FEATURES})")
+    print(f"Number of classes: {NUM_CLASSES}")
+
+
     y_train_cat = to_categorical(y_train, NUM_CLASSES)
     y_val_cat = to_categorical(y_val, NUM_CLASSES)
     
@@ -71,10 +78,10 @@ if __name__ == "__main__":
         project_name='ssl_hyperparameters'
     )
     
-    # EarlyStopping unutar tunera
+    # EarlyStopping 
     stop_early = EarlyStopping(monitor='val_accuracy', patience=3)
     
-    print("\nZapočinje automatska pretraga najboljeg modela...")
+    print("\nStarting automated model selection...")
     tuner.search(
         X_train, y_train_cat,
         epochs=20,
@@ -82,7 +89,7 @@ if __name__ == "__main__":
         callbacks=[stop_early]
     )
     
-    # Izvlačenje i ispis najboljih rezultata
+    
     best_hps = tuner.get_best_hyperparameters(num_trials=1)[0]
     
     best_model = tuner.hypermodel.build(best_hps)
@@ -91,11 +98,11 @@ if __name__ == "__main__":
     best_model.save("models/best_params.keras")
 
     print("\n" + "="*40)
-    print("PRETRAGA ZAVRŠENA! NAJBOLJI PARAMETRI SU:")
-    print(f"-> Prvi LSTM sloj: {best_hps.get('lstm_1_units')} neurona")
-    print(f"-> Prvi Dropout:    {best_hps.get('dropout_1'):.1f}")
-    print(f"-> Drugi LSTM sloj: {best_hps.get('lstm_2_units')} neurona")
-    print(f"-> Drugi Dropout:   {best_hps.get('dropout_2'):.1f}")
-    print(f"-> Dense sloj:      {best_hps.get('dense_units')} neurona")
-    print(f"-> Learning Rate:   {best_hps.get('learning_rate')}")
+    print("HYPERPARAMETER SEARCH COMPLETED! BEST CONFIGURATION:")
+    print(f"-> First LSTM layer units: {best_hps.get('lstm_1_units')}")
+    print(f"-> First Dropout rate:     {best_hps.get('dropout_1'):.1f}")
+    print(f"-> Second LSTM layer units: {best_hps.get('lstm_2_units')}")
+    print(f"-> Second Dropout rate:    {best_hps.get('dropout_2'):.1f}")
+    print(f"-> Dense layer units:      {best_hps.get('dense_units')}")
+    print(f"-> Learning rate:          {best_hps.get('learning_rate')}")
     print("="*40)

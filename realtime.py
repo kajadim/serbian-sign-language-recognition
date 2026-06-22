@@ -1,7 +1,3 @@
-"""
-Debug mod za realtime - pokazuje top 5 kandidata i confidence
-da vidimo sta model tacno misli u svakom momentu
-"""
 import cv2
 import numpy as np
 import os
@@ -22,12 +18,12 @@ from mediapipe.python.solutions import holistic as mp_holistic
 from mediapipe.python.solutions import drawing_utils as mp_drawing
 import mediapipe.python.solutions.hands as mp_hands
 
-model   = load_model("models/best_model_v3.keras")
-scaler  = joblib.load("models/scaler_v3.pkl")
-classes = np.load("models/classes_v3.npy", allow_pickle=True)
+model   = load_model("models/best_model.keras")
+scaler  = joblib.load("models/scaler.pkl")
+classes = np.load("models/classes.npy", allow_pickle=True)
 
 # ============================================================
-# CURL FEATURE-I (savijenost prstiju) - isto kao u prepare_dataset_v2.py
+# CURL FEATURE-I
 # ============================================================
 WRIST = 0
 THUMB_TIP, THUMB_MCP = 4, 2
@@ -84,7 +80,7 @@ def add_curl_features_to_sequence(sequence):
     return np.concatenate([sequence, curl_features], axis=1)
 
 
-FRAME_SIZE = 33*4 + 21*3 + 21*3  # 258 (sirovih, pre dodavanja curl feature-a)
+FRAME_SIZE = 33*4 + 21*3 + 21*3  # 258 
 NUM_FRAMES = 40
 CONFIDENCE = 0.4
 
@@ -110,16 +106,16 @@ def extract_keypoints(results):
     return np.concatenate([pose, left, right])
 
 # State machine
-IDLE       = "cekanje"
-RECORDING  = "snimam"
-PREDICTING = "predikujem"
+IDLE       = "waiting"
+RECORDING  = "recording"
+PREDICTING = "predicting"
 
 state            = IDLE
 record_buffer    = []
 predicted_letter = ""
 confidence_val   = 0.0
 current_word     = ""
-top3             = []   # lista (slovo, confidence) za prikaz
+top3             = []   
 
 cap = cv2.VideoCapture(0)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
@@ -138,7 +134,7 @@ with mp_holistic.Holistic(min_detection_confidence=0.5,
         image.flags.writeable = True
         image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
-        # Crtanje keypointa
+        
         right_hand_style = mp_drawing.DrawingSpec(color=(0, 255, 0),   thickness=1, circle_radius=2)
         right_conn_style  = mp_drawing.DrawingSpec(color=(0, 200, 0),   thickness=1)
         left_hand_style  = mp_drawing.DrawingSpec(color=(255, 100, 0),  thickness=1, circle_radius=2)
@@ -204,7 +200,7 @@ with mp_holistic.Holistic(min_detection_confidence=0.5,
             X_raw, n_left_filled, n_right_filled = interpolate_sequence_gaps(X_raw)
             if n_left_filled > 0 or n_right_filled > 0:
                 print(f"Popunjeno rupa - leva ruka: {n_left_filled}, desna ruka: {n_right_filled}")
-            X_norm_body = normalize_sequence(X_raw)                      # normalizacija na telo (ramena)
+            X_norm_body = normalize_sequence(X_raw)                      # normalization
             X_with_curl = add_curl_features_to_sequence(X_norm_body)     # (40, 268)
             X_2d   = X_with_curl.reshape(1, NUM_FRAMES * X_with_curl.shape[1])
             X_sc   = scaler.transform(X_2d)
@@ -212,7 +208,7 @@ with mp_holistic.Holistic(min_detection_confidence=0.5,
 
             probs  = model.predict(X_3d, verbose=0)[0]
 
-            # Top 5 kandidata
+            # Top 3
             top_idx = np.argsort(probs)[::-1][:3]
             top3    = [(classes[i], probs[i]) for i in top_idx]
 
@@ -229,7 +225,7 @@ with mp_holistic.Holistic(min_detection_confidence=0.5,
         # ============================================================
         h, w = image.shape[:2]
 
-        # Leva strana - glavni rezultat
+        # Left side
         cv2.rectangle(image, (0, h - 130), (w // 2, h), (0, 0, 0), -1)
 
         state_color = (0, 255, 255) if state == RECORDING else (200, 200, 200)
@@ -247,7 +243,7 @@ with mp_holistic.Holistic(min_detection_confidence=0.5,
         cv2.putText(image, f"Slovo: {predicted_letter}",
                     (10, h - 90), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 255, 0), 2)
 
-        # Confidence bar za glavno slovo
+        # Confidence bar for main letter
         if confidence_val > 0:
             bar_w = int(confidence_val * 200)
             bar_color = (0, 255, 0) if confidence_val >= 0.7 else \
@@ -263,10 +259,10 @@ with mp_holistic.Holistic(min_detection_confidence=0.5,
         cv2.putText(image, "ENTER=potvrdi  BACKSPACE=obrisi  SPACE=reset  ESC=izlaz",
                     (10, h - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1)
 
-        # Desna strana - TOP 3 panel
+        # Right side - TOP 3 panel
         panel_x = w - 280
         cv2.rectangle(image, (panel_x - 10, 0), (w, 140), (20, 20, 20), -1)
-        cv2.putText(image, "TOP 3 KANDIDATA:", (panel_x, 25),
+        cv2.putText(image, "TOP 3:", (panel_x, 25),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 1)
 
         for rank, (lbl, prob) in enumerate(top3):
@@ -278,7 +274,7 @@ with mp_holistic.Holistic(min_detection_confidence=0.5,
                         (panel_x, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
                         (255, 255, 255), 1)
 
-        cv2.imshow("Srpski znakovni jezik", image)
+        cv2.imshow("Serbian sign language", image)
 
         key = cv2.waitKey(1) & 0xFF
         if key == 27:
