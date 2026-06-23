@@ -26,7 +26,7 @@ The project follows a clear pipeline: **data collection/loading → preprocessin
 
 - **`evaluate.py`** — Loads the trained model and test set, prints overall accuracy and a per-class classification report, flags letters with F1 < 0.85, lists the most common misclassifications, and saves a per-class F1 plot (`class_evaluation.png`).
 
-- **`realtime.py`** — Real-time recognition demo. Captures 40 frames of a sign from the webcam, runs them through the same preprocessing pipeline used during training, and predicts the letter with a confidence score (shows top-3 predictions). Lets you build a word from recognized letters using keyboard shortcuts (ENTER to confirm, BACKSPACE to delete, SPACE to reset, ESC to quit).
+- **`realtime.py`** — Real-time recognition demo. Captures 40 frames of a sign from the webcam, runs them through the same preprocessing pipeline used during training, and predicts the letter with a confidence score (shows top-3 predictions). Lets you build a word from recognized letters using keyboard shortcuts ( BACKSPACE to delete, SPACE to reset, ESC to quit).
 
 - **`test.py`** — Small utility script to inspect the shape/contents of a single `.npy` file.
 

@@ -109,13 +109,15 @@ def extract_keypoints(results):
 IDLE       = "waiting"
 RECORDING  = "recording"
 PREDICTING = "predicting"
+SHOWING    = "showing"
 
 state            = IDLE
 record_buffer    = []
 predicted_letter = ""
 confidence_val   = 0.0
 current_word     = ""
-top3             = []   
+top3             = []
+letter_added     = False
 
 cap = cv2.VideoCapture(0)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
@@ -186,6 +188,7 @@ with mp_holistic.Holistic(min_detection_confidence=0.5,
                 predicted_letter = ""
                 confidence_val   = 0.0
                 top3             = []
+                letter_added     = False
 
         elif state == RECORDING:
             record_buffer.append(keypoints)
@@ -214,6 +217,13 @@ with mp_holistic.Holistic(min_detection_confidence=0.5,
             confidence_val = probs[class_idx]
             predicted_letter = classes[class_idx] if confidence_val >= CONFIDENCE else "?"
 
+            if predicted_letter != "?" and not letter_added:
+                current_word += predicted_letter
+                letter_added = True
+
+            state = SHOWING
+
+        elif state == SHOWING:
             if not hand_detected:
                 state         = IDLE
                 record_buffer = []
@@ -226,8 +236,9 @@ with mp_holistic.Holistic(min_detection_confidence=0.5,
         # Left side
         cv2.rectangle(image, (0, h - 130), (w // 2, h), (0, 0, 0), -1)
 
-        state_color = (0, 255, 255) if state == RECORDING else (200, 200, 200)
-        cv2.putText(image, f"Stanje: {state}",
+        state_color = (0, 255, 255) if state == RECORDING else \
+                      (0, 255, 0)   if state == SHOWING   else (200, 200, 200)
+        cv2.putText(image, f"State: {state}",
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, state_color, 1)
 
         if state == RECORDING:
@@ -238,7 +249,7 @@ with mp_holistic.Holistic(min_detection_confidence=0.5,
             cv2.putText(image, f"{len(record_buffer)}/{NUM_FRAMES}",
                         (315, 63), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
-        cv2.putText(image, f"Slovo: {predicted_letter}",
+        cv2.putText(image, f"Letter: {predicted_letter}",
                     (10, h - 90), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (0, 255, 0), 2)
 
         # Confidence bar for main letter
@@ -251,10 +262,10 @@ with mp_holistic.Holistic(min_detection_confidence=0.5,
             cv2.putText(image, f"{confidence_val * 100:.0f}%",
                         (215, h - 62), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
-        cv2.putText(image, f"Rec: {current_word}",
+        cv2.putText(image, f"Word: {current_word}",
                     (10, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
 
-        cv2.putText(image, "ENTER=potvrdi  BACKSPACE=obrisi  SPACE=reset  ESC=izlaz",
+        cv2.putText(image, "BACKSPACE=delete  SPACE=reset  ESC=exit",
                     (10, h - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1)
 
         # Right side - TOP 3 panel
@@ -279,9 +290,6 @@ with mp_holistic.Holistic(min_detection_confidence=0.5,
             break
         elif key == 32:
             current_word = ""
-        elif key == 13:
-            if predicted_letter and predicted_letter != "?":
-                current_word += predicted_letter
         elif key == 8:
             current_word = current_word[:-1]
 

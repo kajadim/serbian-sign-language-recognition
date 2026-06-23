@@ -116,12 +116,11 @@ Glavna demonstraciona skripta projekta. Otvara kameru, učitava istreniran model
 
 Na ekranu se, pored skeletona tela i šaka, prikazuje trenutno stanje, traka napretka snimanja, prepoznato slovo sa trakom pouzdanosti, Top 3 panel sa verovatnoćama, i polje za sastavljanje reči od prepoznatih slova. Komande tokom rada:
 
-| Taster        | Akcija                        |
-| ------------- | ----------------------------- |
-| **ENTER**     | Dodaje prepoznato slovo u reč |
-| **BACKSPACE** | Briše posledne slovo iz reči  |
-| **SPACE**     | Briše celu reč                |
-| **ESC**       | Izlazak iz programa           |
+| Taster        | Akcija                       |
+| ------------- | ---------------------------- |
+| **BACKSPACE** | Briše posledne slovo iz reči |
+| **SPACE**     | Briše celu reč               |
+| **ESC**       | Izlazak iz programa          |
 
 ### Ostale pomoćne skripte
 
@@ -227,6 +226,6 @@ Prikazuje detaljnu analizu tačnosti po slovima i čuva grafikon `class_evaluati
 python realtime.py
 ```
 
-Otvara kameru i prikazuje prepoznavanje znakova uživo. Postaviti ruku u kadar i izvesti znak za slovo — sistem automatski snima i prepoznaje. Koristiti **ENTER** za dodavanje prepoznatog slova u reč, **BACKSPACE** za brisanje, **SPACE** za reset reči, i **ESC** za izlazak.
+Otvara kameru i prikazuje prepoznavanje znakova uživo. Postaviti ruku u kadar i izvesti znak za slovo — sistem automatski snima i prepoznaje.Koristiti **BACKSPACE** za brisanje slova, **SPACE** za reset reči, i **ESC** za izlazak.
 
 > **Napomena:** Pre pokretanja `realtime.py` neophodno je da `models/best_model.keras` i `models/scaler.pkl` već postoje (dobijaju se kroz korake 5 i 6).
