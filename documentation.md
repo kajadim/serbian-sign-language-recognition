@@ -108,13 +108,14 @@ Ova skripta je korisna da se vidi koja slova model najteže razlikuje (obično o
 
 ### 8. Prepoznavanje u realnom vremenu — `realtime.py`
 
-Glavna demonstraciona skripta projekta. Otvara kameru, učitava istreniran model, scaler i listu klasa, i radi prepoznavanje slova "uživo", kroz automat sa tri stanja:
+Glavna demonstraciona skripta projekta. Otvara kameru, učitava istreniran model, scaler i listu klasa, i radi prepoznavanje slova "uživo", kroz automat sa četiri stanja:
 
 - **`waiting`** — čeka da se ruka pojavi u kadru.
 - **`recording`** — snima 40 frejmova pokreta (isto kao kod `record_samples.py`). Ako ruka izađe iz kadra pre kraja, snimak se odbacuje.
-- **`predicting`** — kada se skupi 40 frejmova, sekvenca prolazi kroz **isti pipeline obrade** kao u `prepare_dataset.py` (interpolacija → normalizacija → curl feature-i → skaliranje), a zatim se prosleđuje istreniranom modelu. Model vraća verovatnoće za svako slovo; prikazuju se **3 najverovatnije opcije (Top 3)** sa procentima, a kao konačna predikcija se prikazuje slovo sa najvećom verovatnoćom — ali samo ako je ta verovatnoća iznad praga pouzdanosti (40%); inače se prikazuje znak "?".
+- **`predicting`** — kada se skupi 40 frejmova, sekvenca prolazi kroz **isti pipeline obrade** kao u `prepare_dataset.py` (interpolacija → normalizacija → curl feature-i → skaliranje), a zatim se prosleđuje istreniranom modelu. Model vraća verovatnoće za svako slovo; izdvajaju se **3 najverovatnije opcije (Top 3)** sa procentima, a kao konačna predikcija uzima se slovo sa najvećom verovatnoćom — ali samo ako je ta verovatnoća iznad praga pouzdanosti (40%); inače se koristi znak "?". Ako je prepoznato slovo validno, **automatski se dodaje na trenutnu reč** (bez potrebe za dodatnom potvrdom), nakon čega sistem prelazi u stanje `showing`.
+- **`showing`** — prikazuje prepoznato slovo, Top 3 panel i ažuriranu reč na ekranu, i ostaje u ovom stanju sve dok je ruka u kadru (kako se isto slovo ne bi ponovo dodalo). Kada ruka izađe iz kadra, sistem se vraća u `waiting` i čeka novi znak.
 
-Na ekranu se, pored skeletona tela i šaka, prikazuje trenutno stanje, traka napretka snimanja, prepoznato slovo sa trakom pouzdanosti, Top 3 panel sa verovatnoćama, i polje za sastavljanje reči od prepoznatih slova. Komande tokom rada:
+Na ekranu se, pored skeletona tela i šaka, prikazuje trenutno stanje, traka napretka snimanja, prepoznato slovo sa trakom pouzdanosti, Top 3 panel sa verovatnoćama, i polje sa rečju koja se sastavlja od automatski prepoznatih slova. Komande tokom rada:
 
 | Taster        | Akcija                       |
 | ------------- | ---------------------------- |
@@ -226,6 +227,6 @@ Prikazuje detaljnu analizu tačnosti po slovima i čuva grafikon `class_evaluati
 python realtime.py
 ```
 
-Otvara kameru i prikazuje prepoznavanje znakova uživo. Postaviti ruku u kadar i izvesti znak za slovo — sistem automatski snima i prepoznaje.Koristiti **BACKSPACE** za brisanje slova, **SPACE** za reset reči, i **ESC** za izlazak.
+Otvara kameru i prikazuje prepoznavanje znakova uživo. Postaviti ruku u kadar i izvesti znak za slovo — sistem automatski snima, prepoznaje i dodaje prepoznato slovo na reč, bez potrebe za dodatnom potvrdom. Koristiti **BACKSPACE** za brisanje poslednjeg slova, **SPACE** za reset reči, i **ESC** za izlazak.
 
 > **Napomena:** Pre pokretanja `realtime.py` neophodno je da `models/best_model.keras` i `models/scaler.pkl` već postoje (dobijaju se kroz korake 5 i 6).

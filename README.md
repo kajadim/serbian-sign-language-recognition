@@ -26,7 +26,7 @@ The project follows a clear pipeline: **data collection/loading → preprocessin
 
 - **`evaluate.py`** — Loads the trained model and test set, prints overall accuracy and a per-class classification report, flags letters with F1 < 0.85, lists the most common misclassifications, and saves a per-class F1 plot (`class_evaluation.png`).
 
-- **`realtime.py`** — Real-time recognition demo. Captures 40 frames of a sign from the webcam, runs them through the same preprocessing pipeline used during training, and predicts the letter with a confidence score (shows top-3 predictions). Lets you build a word from recognized letters using keyboard shortcuts ( BACKSPACE to delete, SPACE to reset, ESC to quit).
+- **`realtime.py`** — Real-time recognition demo. Captures 40 frames of a sign from the webcam, runs them through the same preprocessing pipeline used during training, and predicts the letter with a confidence score (shows top-3 predictions). If the prediction is confident enough, the letter is **added to the current word automatically** — no confirmation key needed. The app then sits in a `showing` state (displaying the result) until the hand leaves the frame, so the same letter isn't added twice. Use BACKSPACE to delete the last letter, SPACE to reset the word, and ESC to quit.
 
 - **`test.py`** — Small utility script to inspect the shape/contents of a single `.npy` file.
 
@@ -103,6 +103,8 @@ python evaluate.py
 ```bash
 python realtime.py
 ```
+
+Show a sign in front of the camera — the system records, predicts, and adds the recognized letter to the word automatically. Use BACKSPACE to delete the last letter, SPACE to reset the word, ESC to quit.
 
 > Requires `models/best_model.keras` and `models/scaler.pkl` to exist (produced in steps 3–4) before running `realtime.py`.
 
